@@ -69,23 +69,142 @@ class MainActivity : Activity() {
     private lateinit var sensLabel: TextView
     private lateinit var logView: TextView
 
+    private var reportShown = false
+    private var healthyMarked = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        MayaApp.stage(this, "activity:onCreate")
         prefs = Prefs(this)
-        Notifications.ensureChannels(this)
-        window.setBackgroundDrawable(ColorDrawable(cBg))
-        setContentView(buildUi())
+
+        // If the previous run died with an exception, show it instead of crashing again.
+        val previous = MayaApp.takeCrash(this)
+        if (previous != null) {
+            showReport(previous)
+            return
+        }
+        try {
+            Notifications.ensureChannels(this)
+            window.setBackgroundDrawable(ColorDrawable(cBg))
+            MayaApp.stage(this, "activity:buildUi")
+            setContentView(buildUi())
+            MayaApp.stage(this, "activity:ui built")
+            MayaApp.previousStartWasUnclean(this)?.let { MayaBus.log("Previous start ended early at: " + it) }
+        } catch (t: Throwable) {
+            report(t)
+        }
     }
 
     override fun onStart() {
         super.onStart()
-        MayaBus.listener = { render() }
-        render()
+        if (reportShown) return
+        try {
+            MayaApp.stage(this, "activity:onStart")
+            MayaBus.listener = { safeRender() }
+            render()
+            if (!healthyMarked) {
+                healthyMarked = true
+                MayaApp.markHealthy(this)  // the UI is up: a later crash is not a start-up crash
+            }
+        } catch (t: Throwable) {
+            MayaBus.listener = null
+            report(t)
+        }
     }
 
     override fun onStop() {
         MayaBus.listener = null
         super.onStop()
+    }
+
+    // ------------------------------------------------------------------------------ crash reporting
+
+    private fun safeRender() {
+        if (reportShown) return
+        try {
+            render()
+        } catch (t: Throwable) {
+            MayaBus.listener = null
+            report(t)
+        }
+    }
+
+    /** Records [t] and replaces the screen with the report, so the reason is visible on the phone. */
+    private fun report(t: Throwable) {
+        MayaApp.record(this, Thread.currentThread(), t)
+        val text = MayaApp.takeCrash(this) ?: (t.toString() + "\n" + android.util.Log.getStackTraceString(t))
+        showReport(text)
+    }
+
+    /**
+     * Minimal, dependency-free screen: framework views only, no prefs, no bus, no models.
+     * The text can be selected, copied and shared, which is how the trace gets back to me.
+     */
+    private fun showReport(text: String) {
+        reportShown = true
+        val full = if (text.contains("stack trace")) text else text + "\n\n--- start-up breadcrumbs ---\n" + MayaApp.startupLog(this)
+
+        val body = TextView(this).apply {
+            this.text = full
+            textSize = 11f
+            setTextColor(Color.parseColor("#E6E9EE"))
+            typeface = Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        val share = button("Share this report", primary = true) { shareReport(full) }
+        val copy = button("Copy", primary = false) { copyReport(full) }
+        val close = button("Close Maya", primary = false) { finish() }
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#0E1116"))
+            setPadding(0, dp(24), 0, dp(16))
+            addView(text("Maya hit an error", 19f, Color.parseColor("#FF6B6B"), true).apply {
+                setPadding(dp(16), 0, dp(16), dp(4))
+            })
+            addView(text(
+                "Please send this to whoever builds Maya. It contains no audio and no personal data.",
+                12f, Color.parseColor("#8B95A5")
+            ).apply { setPadding(dp(16), 0, dp(16), dp(10)) })
+            addView(ScrollView(this@MainActivity).apply {
+                addView(body)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            })
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(16), dp(10), dp(16), 0)
+                addView(share, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                addView(copy, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 8))
+                addView(close, lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 8))
+            })
+        }
+        try {
+            setContentView(root)
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun shareReport(text: String) {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Maya crash report")
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        try {
+            startActivity(Intent.createChooser(send, "Send the Maya report"))
+        } catch (_: Throwable) {
+            copyReport(text)
+        }
+    }
+
+    private fun copyReport(text: String) {
+        try {
+            val cm = getSystemService(android.content.ClipboardManager::class.java)
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("Maya report", text))
+            Toast.makeText(this, "Copied. Paste it into a message to the Maya developer.", Toast.LENGTH_LONG).show()
+        } catch (_: Throwable) {
+        }
     }
 
     // ------------------------------------------------------------------------------------------ UI

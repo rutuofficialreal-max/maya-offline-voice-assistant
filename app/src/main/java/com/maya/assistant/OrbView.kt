@@ -53,6 +53,7 @@ class OrbView(context: Context) : View(context) {
         val cx = width / 2f
         val cy = height / 2f
         val r = minOf(cx, cy)
+        if (r <= 1f) return  // not laid out yet: RadialGradient throws on a radius of 0
         val base = r * 0.52f
         if (animator.isRunning) {
             for (i in 0..1) {
