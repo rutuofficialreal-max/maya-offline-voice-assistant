@@ -1,0 +1,61 @@
+name: Build Maya APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android platform, NDK and CMake
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+
+      - name: Cache native dependencies
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/cpp/third_party
+          key: native-deps-${{ hashFiles('scripts/versions.env', 'scripts/fetch_deps.sh') }}
+
+      - name: Fetch native dependencies (llama.cpp, whisper.cpp, sherpa-onnx, Vulkan headers)
+        run: bash scripts/fetch_deps.sh
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      # First choice: llama.cpp with the Vulkan GPU backend.
+      - name: Build APK (Vulkan)
+        id: vulkan
+        continue-on-error: true
+        run: gradle --no-daemon :app:assembleRelease -PmayaVulkan=ON
+
+      # If the Vulkan toolchain misbehaves on the runner, still produce a working CPU-only APK.
+      - name: Build APK (CPU-only fallback)
+        if: steps.vulkan.outcome == 'failure'
+        run: |
+          rm -rf app/.cxx app/build
+          gradle --no-daemon :app:assembleRelease -PmayaVulkan=OFF
+
+      - name: Collect APK
+        run: |
+          mkdir -p dist
+          VARIANT="${{ steps.vulkan.outcome == 'success' && 'vulkan' || 'cpu-only' }}"
+          cp app/build/outputs/apk/release/app-release.apk "dist/Maya-${VARIANT}.apk"
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Maya-apk
+          path: dist/*.apk

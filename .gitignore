@@ -1,0 +1,11 @@
+# fetched by scripts/fetch_deps.sh
+app/src/main/cpp/third_party/
+# build output
+build/
+.gradle/
+.cxx/
+local.properties
+*.iml
+.idea/
+*.apk
+dist/
