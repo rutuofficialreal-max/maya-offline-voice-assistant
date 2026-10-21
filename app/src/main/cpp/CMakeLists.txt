@@ -72,6 +72,13 @@ endif()
 
 add_subdirectory("${TP}/llama.cpp" llama_build EXCLUDE_FROM_ALL)
 
+# ggml-vulkan includes <spirv/unified1/spirv.hpp> directly, but its CMakeLists only does
+# find_package(SPIRV-Headers CONFIG) without attaching the headers to the target, so the
+# include directory has to be added here (this file is why: ggml-vulkan-types.h:47).
+if(MAYA_VULKAN AND TARGET ggml-vulkan)
+  target_include_directories(ggml-vulkan PRIVATE "${TP}/SPIRV-Headers/include")
+endif()
+
 # ------------------------------------------------------------------------------------------
 # sherpa-onnx prebuilt C API + ONNX Runtime (wake word, Silero VAD, VITS TTS)
 # ------------------------------------------------------------------------------------------
