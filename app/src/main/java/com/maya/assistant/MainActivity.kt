@@ -309,7 +309,7 @@ class MainActivity : Activity() {
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
                         if (fromUser) prefs.sensitivity = p
-                        sensLabel.text = "Sensitivity $p%  (trigger threshold %.3f, applies next start)".format(java.util.Locale.US, prefs.wakeThreshold)
+                        sensLabel.text = "Sensitivity $p%%  (trigger threshold %.3f, applies next start)".format(java.util.Locale.US, prefs.wakeThreshold)
                     }
                     override fun onStartTrackingTouch(s: SeekBar?) {}
                     override fun onStopTrackingTouch(s: SeekBar?) {}
@@ -448,7 +448,7 @@ class MainActivity : Activity() {
         calBtn.isEnabled = !calibrating && !running && ModelManager.kwsReady(this)
         calBtn.alpha = if (calBtn.isEnabled) 1f else 0.45f
         calReset.visibility = if (phrases.isEmpty()) View.GONE else View.VISIBLE
-        sensLabel.text = "Sensitivity ${prefs.sensitivity}%  (trigger threshold %.3f, applies next start)".format(java.util.Locale.US, prefs.wakeThreshold)
+        sensLabel.text = "Sensitivity ${prefs.sensitivity}%%  (trigger threshold %.3f, applies next start)".format(java.util.Locale.US, prefs.wakeThreshold)
 
         // assistant
         startBtn.text = if (running) "Stop Maya" else "Start Maya"
