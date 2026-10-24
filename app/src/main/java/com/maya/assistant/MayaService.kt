@@ -29,6 +29,7 @@ class MayaService : Service(), MayaListener {
         const val ACTION_START = "com.maya.assistant.action.START"
         const val ACTION_STOP = "com.maya.assistant.action.STOP"
         const val ACTION_INTERRUPT = "com.maya.assistant.action.INTERRUPT"
+        const val ACTION_RELOAD_WAKE = "com.maya.assistant.action.RELOAD_WAKE"
         private const val NOTIF_ID = 1
         private const val LISTEN_NOTIF_ID = 2
         private const val TAG = "MayaService"
@@ -39,6 +40,11 @@ class MayaService : Service(), MayaListener {
 
         fun stop(ctx: Context) {
             ctx.startService(Intent(ctx, MayaService::class.java).setAction(ACTION_STOP))
+        }
+
+        /** Applies the current sensitivity / calibrated phrases to a running engine without a restart. */
+        fun reloadWake(ctx: Context) {
+            ctx.startService(Intent(ctx, MayaService::class.java).setAction(ACTION_RELOAD_WAKE))
         }
 
         fun interrupt(ctx: Context) {
@@ -66,10 +72,35 @@ class MayaService : Service(), MayaListener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> shutdown()
-            ACTION_INTERRUPT -> if (handle != 0L) NativeBridge.nativeInterrupt(handle)
+            ACTION_INTERRUPT -> {
+                if (handle != 0L) NativeBridge.nativeInterrupt(handle)
+                stopIfIdle()
+            }
+            ACTION_RELOAD_WAKE -> {
+                reloadWakeWord()
+                stopIfIdle()
+            }
             else -> startEngine()
         }
         return START_NOT_STICKY  // a microphone service cannot be restarted from the background on Android 14+
+    }
+
+    /** A helper intent (interrupt / reload) can create this service when nothing is running: do not leave it idle. */
+    private fun stopIfIdle() {
+        if (handle == 0L && !starting && !stopping) stopSelf()
+    }
+
+    private fun reloadWakeWord() {
+        val h = handle
+        if (h == 0L) return
+        val prefs = Prefs(this)
+        exec.execute {
+            try {
+                NativeBridge.nativeSetWake(h, prefs.wakeThreshold, prefs.phrases.joinToString("\n"))
+            } catch (t: Throwable) {
+                Log.e(TAG, "nativeSetWake failed", t)
+            }
+        }
     }
 
     // ------------------------------------------------------------------------------------------

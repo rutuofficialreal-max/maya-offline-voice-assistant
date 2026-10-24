@@ -82,6 +82,7 @@ object ModelManager {
         kv("tts.model", path(ctx, "tts", TTS_MODEL))
         kv("tts.tokens", path(ctx, "tts", "tokens.txt"))
         kv("tts.data_dir", path(ctx, "tts", "espeak-ng-data"))
+        kv("tts.mode", prefs.voiceStyle)
         kv("pin_big_cores", 1)
     }
 }

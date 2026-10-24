@@ -15,8 +15,10 @@
 #include "audio_player.h"
 #include "common.h"
 #include "llm.h"
+#include "speech_assembler.h"
 #include "stt_whisper.h"
 #include "tts_sherpa.h"
+#include "tts_style.h"
 #include "vad.h"
 #include "wake_word.h"
 
@@ -51,6 +53,7 @@ struct EngineConfig {
   int maxWords = 50;
   float minGpuTps = 4.0f;
   float ttsSpeed = 1.0f;
+  std::string ttsMode = "balanced";  // fast | balanced | smooth (see tts_style.h)
   int ttsThreads = 2;
   bool pinBigCores = true;
 
@@ -69,6 +72,9 @@ class MayaEngine {
   bool start();                                          // opens the mic and starts the loop
   void stop();                                           // joins threads, closes audio (idempotent)
   void interrupt();                                      // cut the current answer short
+  // Applies a new wake threshold / calibrated phrases without reloading any model. Thread-safe;
+  // the pipeline thread picks it up the next time it waits for the wake word.
+  void setWakeOptions(float threshold, std::vector<std::string> phrases);
 
  private:
   // One spoken answer: the pipeline thread produces text chunks, the TTS thread consumes them.
@@ -85,6 +91,7 @@ class MayaEngine {
   void pipelineLoop();
   void ttsLoop();
   bool waitForWake(std::vector<int16_t>& preroll);
+  void applyPendingWake();
   bool captureCommand(const std::vector<int16_t>& preroll, std::vector<float>& pcm);
   void respond(const std::string& text, int sttMs);
   void setState(State s);
@@ -108,6 +115,12 @@ class MayaEngine {
   std::atomic<bool> interrupt_{false};
   std::atomic<State> state_{State::Stopped};
   std::string backendInfo_;
+  TtsStyle style_;
+
+  WakeWordOptions wakeBase_;           // model paths etc., fixed after init()
+  std::mutex wakeMu_;
+  WakeWordOptions pendingWake_;        // guarded by wakeMu_
+  std::atomic<bool> wakeDirty_{false};
 
   std::thread pipeline_;
   std::thread ttsThread_;

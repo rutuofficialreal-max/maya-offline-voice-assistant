@@ -2,9 +2,43 @@ name: Build Maya APK
 
 on:
   push:
+    branches: [main]
+    paths-ignore: ["**.md", ".gitignore"]
+  pull_request:
   workflow_dispatch:
 
+# A newer push makes an older, still-running build pointless.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # Fast (about a minute): catches the bug classes the compiler cannot, before or while the long build runs.
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Interface lint (format strings, Kotlin-C++ config keys, JNI signatures)
+        run: |
+          python3 scripts/test_check_interfaces.py
+          python3 scripts/check_interfaces.py
+
+      - name: C++ host tests (text, chunker, ring buffer under TSan, wake gate, voice styles)
+        run: |
+          # GCC's sanitizers crash on the runners' default address randomisation (actions/runner-images#9491)
+          sudo sysctl -w vm.mmap_rnd_bits=28 || true
+          bash scripts/run_host_tests.sh
+
+      - name: Kotlin pure-logic tests on a plain JVM (UI strings, phrase merging, clip trimming)
+        run: bash scripts/run_jvm_tests.sh
+
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 120

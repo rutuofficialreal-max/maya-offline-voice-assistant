@@ -34,10 +34,13 @@ std::string stripWakePhrase(const std::string& transcript);
 class SentenceChunker {
  public:
   struct Options {
-    int firstMinWords = 4;   // earliest clause break allowed for the first chunk
-    int laterMinWords = 8;   // clause break threshold for later chunks
-    int firstMaxWords = 12;  // force-flush the first chunk after this many words
-    int laterMaxWords = 26;  // force-flush later chunks after this many words
+    int firstMinWords = 4;           // clause break (, ; :) allowed once the first chunk has this many words
+    int laterMinWords = 8;           // same for later chunks (999 disables clause breaks)
+    int firstMaxWords = 12;          // force a cut after this many words without any punctuation
+    int laterMaxWords = 26;
+    int firstSentenceMinWords = 1;   // a sentence end closes the first chunk only with at least this many words
+    int laterSentenceMinWords = 3;   // short sentences are merged into the next one
+    bool holdAll = false;            // release nothing until flush(), then the whole reply as ONE chunk
   };
   SentenceChunker() = default;
   explicit SentenceChunker(const Options& o) : opt_(o) {}

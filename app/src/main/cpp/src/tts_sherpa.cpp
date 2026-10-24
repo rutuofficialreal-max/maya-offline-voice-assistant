@@ -56,7 +56,8 @@ bool Tts::init(const TtsOptions& o, std::string* err) {
   return true;
 }
 
-bool Tts::synthesize(const std::string& text, float speed, const std::function<bool(const float*, int)>& sink) {
+bool Tts::synthesize(const std::string& text, float speed, float silenceScale,
+                     const std::function<bool(const float*, int)>& sink) {
   if (!tts_ || text.empty()) return false;
   CbCtx ctx;
   ctx.sink = &sink;
@@ -64,7 +65,7 @@ bool Tts::synthesize(const std::string& text, float speed, const std::function<b
   std::memset(&gc, 0, sizeof gc);
   gc.sid = 0;
   gc.speed = speed;
-  gc.silence_scale = 0.2f;
+  gc.silence_scale = silenceScale;
   std::unique_ptr<const SherpaOnnxGeneratedAudio, AudioDel> audio(
       SherpaOnnxOfflineTtsGenerateWithConfig(tts_.get(), text.c_str(), &gc, &onSamples, &ctx));
   // Safety net: if the library returned audio without calling back, play it now.

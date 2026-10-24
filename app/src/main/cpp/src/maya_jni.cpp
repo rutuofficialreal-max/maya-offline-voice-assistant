@@ -107,6 +107,25 @@ void nativeInterrupt(JNIEnv*, jobject, jlong handle) {
   if (b && b->engine) b->engine->interrupt();
 }
 
+// Live wake-word update: threshold + calibrated phrases ('\n' separated token strings).
+void nativeSetWake(JNIEnv* env, jobject, jlong handle, jfloat threshold, jstring jphrases) {
+  auto* b = reinterpret_cast<Bridge*>(handle);
+  if (!b || !b->engine) return;
+  const char* chars = jphrases ? env->GetStringUTFChars(jphrases, nullptr) : nullptr;
+  const std::string all = chars ? chars : "";
+  if (chars) env->ReleaseStringUTFChars(jphrases, chars);
+  std::vector<std::string> phrases;
+  size_t pos = 0;
+  while (pos < all.size()) {
+    size_t nl = all.find('\n', pos);
+    if (nl == std::string::npos) nl = all.size();
+    std::string line = all.substr(pos, nl - pos);
+    pos = nl + 1;
+    if (!line.empty()) phrases.push_back(line);
+  }
+  b->engine->setWakeOptions(threshold, std::move(phrases));
+}
+
 void nativeDestroy(JNIEnv* env, jobject, jlong handle) {
   auto* b = reinterpret_cast<Bridge*>(handle);
   if (!b) return;
@@ -145,6 +164,7 @@ const JNINativeMethod kMethods[] = {
     {"nativeStop", "(J)V", reinterpret_cast<void*>(nativeStop)},
     {"nativeInterrupt", "(J)V", reinterpret_cast<void*>(nativeInterrupt)},
     {"nativeDestroy", "(J)V", reinterpret_cast<void*>(nativeDestroy)},
+    {"nativeSetWake", "(JFLjava/lang/String;)V", reinterpret_cast<void*>(nativeSetWake)},
     {"nativeCalibrateDecode", "(Ljava/lang/String;[S)Ljava/lang/String;", reinterpret_cast<void*>(nativeCalibrateDecode)},
 };
 

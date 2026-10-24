@@ -10,6 +10,7 @@
 #include <unordered_set>
 
 #include "common.h"
+#include "wake_gate.h"
 
 namespace maya {
 
@@ -25,9 +26,10 @@ bool fileExists(const std::string& p) {
 // "▁" is U+2581, SentencePiece's word-start marker. Calibration replaces these with the
 // user's own pronunciation, which is far more reliable for accents such as Indian English.
 const char* const kFactoryPhrases[] = {
-    "\xE2\x96\x81HE Y \xE2\x96\x81MA Y A",
-    "\xE2\x96\x81HE Y \xE2\x96\x81MY R",
-    "\xE2\x96\x81HE Y \xE2\x96\x81MY ER",
+    "▁HE Y ▁MA Y A",  // MAY-uh
+    "▁HE Y ▁MY A",    // MY-ah: what Indian-English "Maya" was heard as on the real phone
+    "▁HE Y ▁MY R",    // MY-uh (British)
+    "▁HE Y ▁MY ER",
 };
 
 // Every token must exist in tokens.txt: sherpa-onnx calls exit() on an unknown token.
@@ -59,7 +61,9 @@ struct RecognizerDel {
 };
 }  // namespace
 
-bool WakeWord::init(const WakeWordOptions& o, std::string* err) {
+bool WakeWord::init(const WakeWordOptions& o, std::string* err) { return reconfigure(o, err); }
+
+bool WakeWord::reconfigure(const WakeWordOptions& o, std::string* err) {
   for (const std::string* p : {&o.encoder, &o.decoder, &o.joiner, &o.tokens}) {
     if (!fileExists(*p)) {
       *err = "Missing wake-word model file: " + *p;
@@ -109,11 +113,13 @@ bool WakeWord::init(const WakeWordOptions& o, std::string* err) {
   c.keywords_buf = keywords.c_str();
   c.keywords_buf_size = static_cast<int32_t>(keywords.size());
 
-  spotter_.reset(SherpaOnnxCreateKeywordSpotter(&c));
-  if (!spotter_) {
+  std::unique_ptr<const SherpaOnnxKeywordSpotter, SpotterDel> fresh(SherpaOnnxCreateKeywordSpotter(&c));
+  if (!fresh) {
     *err = "Could not create the wake-word spotter (check the model files)";
-    return false;
+    return false;  // an existing spotter keeps working untouched
   }
+  stream_.reset();                 // the old stream must die before the old spotter
+  spotter_ = std::move(fresh);
   reset();
   return stream_ != nullptr;
 }
@@ -197,20 +203,10 @@ bool decodeWakeCalibration(const WakeWordOptions& o, const int16_t* pcm, size_t 
     *err = "Nothing was heard";
     return false;
   }
-  // Quality gates: a calibration sample must sound like "Hey <name>". Otherwise a mumbled
-  // attempt ("HATE MYA", "HEY MAYA TODAY") would become a wake phrase and cause false triggers.
-  int words = 0;
-  for (size_t i = 0; i + 2 < tokens->size(); ++i) {
-    if (static_cast<unsigned char>((*tokens)[i]) == 0xE2 && static_cast<unsigned char>((*tokens)[i + 1]) == 0x96 &&
-        static_cast<unsigned char>((*tokens)[i + 2]) == 0x81) ++words;
-  }
-  const std::string heyPrefix = "\xE2\x96\x81HE Y ";
-  if (tokens->compare(0, heyPrefix.size(), heyPrefix) != 0) {
-    *err = "Heard \"" + *text + "\". Please say \"Hey Maya\" clearly";
-    return false;
-  }
-  if (words != 2) {
-    *err = "Heard \"" + *text + "\". Please say just \"Hey Maya\"";
+  // Quality gate (see wake_gate.cpp): a mumbled attempt must not become a wake phrase.
+  const WakeSampleVerdict verdict = evaluateWakeSample(*tokens);
+  if (!verdict.ok) {
+    *err = verdict.reason;
     return false;
   }
   return true;

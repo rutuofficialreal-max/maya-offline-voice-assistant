@@ -50,7 +50,7 @@ EngineConfig EngineConfig::parse(const std::string& text) {
     i32("whisper.threads", c.whisperThreads); flag("whisper.gpu", c.whisperGpu); flag("whisper.adaptive_ctx", c.whisperAdaptiveCtx);
     i32("llm.gpu_layers", c.llmGpuLayers); i32("llm.ctx", c.llmCtx); i32("llm.threads", c.llmThreads);
     i32("llm.max_words", c.maxWords); f32("llm.min_gpu_tps", c.minGpuTps);
-    f32("tts.speed", c.ttsSpeed); i32("tts.threads", c.ttsThreads);
+    f32("tts.speed", c.ttsSpeed); str("tts.mode", c.ttsMode); i32("tts.threads", c.ttsThreads);
     flag("pin_big_cores", c.pinBigCores);
   }
   return c;
@@ -79,7 +79,8 @@ bool MayaEngine::init(const EngineConfig& cfg, std::string* err) {
   // Threads created while this guard is alive (ONNX Runtime pools) inherit the big-core mask.
   ScopedAffinity pinned(bigCores_);
 
-  emit(EVT_INFO, "Loading voice…");
+  style_ = styleFor(parseVoiceStyle(cfg.ttsMode));
+  emit(EVT_INFO, "Loading voice (" + cfg.ttsMode + " style)…");
   TtsOptions to;
   to.model = cfg.ttsModel; to.tokens = cfg.ttsTokens; to.dataDir = cfg.ttsDataDir; to.threads = cfg.ttsThreads;
   if (!tts_.init(to, err)) return false;
@@ -88,6 +89,7 @@ bool MayaEngine::init(const EngineConfig& cfg, std::string* err) {
   WakeWordOptions wo;
   wo.encoder = cfg.kwsEncoder; wo.decoder = cfg.kwsDecoder; wo.joiner = cfg.kwsJoiner; wo.tokens = cfg.kwsTokens;
   wo.threshold = cfg.kwsThreshold; wo.boost = cfg.kwsBoost; wo.threads = 1; wo.phrases = cfg.kwsPhrases;
+  wakeBase_ = wo;
   if (!kws_.init(wo, err)) return false;
 
   emit(EVT_INFO, "Loading voice detector…");
@@ -144,6 +146,34 @@ void MayaEngine::interrupt() {
   player_.flush();
 }
 
+void MayaEngine::setWakeOptions(float threshold, std::vector<std::string> phrases) {
+  {
+    std::lock_guard<std::mutex> lk(wakeMu_);
+    pendingWake_ = wakeBase_;
+    pendingWake_.threshold = threshold;
+    pendingWake_.phrases = std::move(phrases);
+  }
+  wakeDirty_.store(true);
+}
+
+// Pipeline thread only (kws_ is not thread-safe).
+void MayaEngine::applyPendingWake() {
+  WakeWordOptions opts;
+  {
+    std::lock_guard<std::mutex> lk(wakeMu_);
+    opts = pendingWake_;
+  }
+  std::string err;
+  if (kws_.reconfigure(opts, &err)) {
+    char m[96];
+    std::snprintf(m, sizeof m, "Wake word updated (threshold %.3f, %zu calibrated phrase(s))", opts.threshold,
+                  opts.phrases.size());
+    emit(EVT_INFO, m);
+  } else {
+    emit(EVT_INFO, "Wake word update failed, keeping the previous one: " + err);
+  }
+}
+
 // ------------------------------------------------------------------ pipeline thread
 
 void MayaEngine::pipelineLoop() {
@@ -196,6 +226,7 @@ bool MayaEngine::waitForWake(std::vector<int16_t>& preroll) {
   std::vector<float> f(800);
 
   while (running_.load()) {
+    if (wakeDirty_.exchange(false)) applyPendingWake();
     if (!capture_.restartIfNeeded()) {
       std::this_thread::sleep_for(100ms);
       continue;
@@ -276,7 +307,7 @@ void MayaEngine::respond(const std::string& text, int sttMs) {
   capture_.setActive(false);  // half-duplex: don't let Maya hear herself
   if (!player_.begin(tts_.sampleRate())) emit(EVT_ERROR, "Audio output unavailable");
 
-  SentenceChunker chunker;
+  SentenceChunker chunker(style_.chunker);
   std::vector<std::string> chunks;
   auto handOver = [&] {
     if (chunks.empty()) return;
@@ -338,6 +369,15 @@ void MayaEngine::ttsLoop() {
       u = std::move(job_);
       job_.reset();
     }
+    // One assembler per answer: it trims each sentence's edges and inserts the pauses between them.
+    SpeechAssembler speaker(tts_, style_, cfg_.ttsSpeed, [&](const float* samples, size_t n) {
+      if (interrupt_.load()) return false;
+      if (u->firstAudioMs < 0) {
+        u->firstAudioMs = static_cast<int>(nowMs() - u->t0);
+        setState(State::Speaking);
+      }
+      return player_.write(samples, n, &interrupt_);
+    });
     for (;;) {
       std::string chunk;
       {
@@ -351,16 +391,7 @@ void MayaEngine::ttsLoop() {
         chunk = std::move(u->chunks.front());
         u->chunks.pop_front();
       }
-      const std::string speech = sanitizeForSpeech(chunk);
-      if (speech.empty()) continue;
-      tts_.synthesize(speech, cfg_.ttsSpeed, [&](const float* samples, int n) {
-        if (interrupt_.load()) return false;
-        if (u->firstAudioMs < 0) {
-          u->firstAudioMs = static_cast<int>(nowMs() - u->t0);
-          setState(State::Speaking);
-        }
-        return player_.write(samples, static_cast<size_t>(n), &interrupt_);
-      });
+      speaker.speak(chunk);
       if (interrupt_.load()) break;
     }
     {

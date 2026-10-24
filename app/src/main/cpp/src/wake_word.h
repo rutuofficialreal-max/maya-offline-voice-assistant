@@ -34,6 +34,9 @@ class WakeWord {
   WakeWord& operator=(const WakeWord&) = delete;
 
   bool init(const WakeWordOptions& opt, std::string* err);
+  // Rebuilds the spotter with new phrases / threshold. On failure the previous one stays active.
+  // Call from the thread that calls accept().
+  bool reconfigure(const WakeWordOptions& opt, std::string* err);
   void reset();                              // start a fresh decoding stream
   bool accept(const float* pcm, size_t n);   // true => "Hey Maya" was just heard
 

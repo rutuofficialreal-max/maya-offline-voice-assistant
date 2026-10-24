@@ -112,6 +112,9 @@ add_library(maya SHARED
   src/tts_sherpa.cpp
   src/text_utils.cpp
   src/cpu_affinity.cpp
+  src/wake_gate.cpp
+  src/speech_utils.cpp
+  src/speech_assembler.cpp
   ${WHISPER_SRC})
 
 set_source_files_properties(${WHISPER_SRC} PROPERTIES

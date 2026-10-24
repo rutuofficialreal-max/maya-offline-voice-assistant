@@ -10,8 +10,6 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
-import android.media.AudioManager
-import android.media.ToneGenerator
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -67,6 +65,8 @@ class MainActivity : Activity() {
     private lateinit var silenceBtn: Button
     private lateinit var gpuSwitch: Switch
     private lateinit var sensLabel: TextView
+    private lateinit var styleButtons: List<Button>
+    private lateinit var styleHint: TextView
     private lateinit var logView: TextView
 
     private var reportShown = false
@@ -300,7 +300,7 @@ class MainActivity : Activity() {
                 addView(calReset, LinearLayout.LayoutParams(0, wrap, 1f).apply { leftMargin = dp(8) })
                 layoutParams = lp(match, wrap, 12)
             },
-            text("Sensitivity (applies next start)", 12f, cMuted).apply { layoutParams = lp(match, wrap, 14) }.also { sensLabel = it },
+            text(UiText.sensitivityLabel(prefs.sensitivity, prefs.wakeThreshold, MayaBus.running), 12f, cMuted).apply { layoutParams = lp(match, wrap, 14) }.also { sensLabel = it },
             SeekBar(this).apply {
                 max = 100
                 progress = prefs.sensitivity
@@ -309,10 +309,12 @@ class MainActivity : Activity() {
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
                         if (fromUser) prefs.sensitivity = p
-                        sensLabel.text = "Sensitivity $p%%  (trigger threshold %.3f, applies next start)".format(java.util.Locale.US, prefs.wakeThreshold)
+                        sensLabel.text = UiText.sensitivityLabel(p, prefs.wakeThreshold, MayaBus.running)
                     }
                     override fun onStartTrackingTouch(s: SeekBar?) {}
-                    override fun onStopTrackingTouch(s: SeekBar?) {}
+                    override fun onStopTrackingTouch(s: SeekBar?) {
+                        if (MayaBus.running) MayaService.reloadWake(this@MainActivity)  // applied live, no restart
+                    }
                 })
             }
         )
@@ -338,6 +340,18 @@ class MainActivity : Activity() {
                 render()
             }
         }
+        val styleKeys = listOf("fast", "balanced", "smooth")
+        styleButtons = listOf("Fast", "Balanced", "Smooth").mapIndexed { i, label ->
+            button(label, false) { prefs.voiceStyle = styleKeys[i]; render() }
+        }
+        styleHint = text("", 12f, cMuted)
+        val styleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            styleButtons.forEachIndexed { i, b ->
+                addView(b, LinearLayout.LayoutParams(0, wrap, 1f).apply { if (i > 0) leftMargin = dp(8) })
+            }
+            layoutParams = lp(match, wrap, 6)
+        }
         val settings = card(
             "Settings",
             Switch(this).apply {
@@ -348,6 +362,9 @@ class MainActivity : Activity() {
                 layoutParams = lp(match, wrap, 8)
             },
             gpuSwitch.apply { layoutParams = lp(match, wrap, 10) },
+            text("Voice style", 13f, cText, true).apply { layoutParams = lp(match, wrap, 16) },
+            styleRow,
+            styleHint.apply { layoutParams = lp(match, wrap, 6) },
             button("Allow background running", false) { onBattery() }.apply { layoutParams = lp(match, wrap, 12) },
             button("Delete downloaded models", false) { confirmDelete() }.apply { layoutParams = lp(match, wrap, 8) }
         )
@@ -438,17 +455,11 @@ class MainActivity : Activity() {
 
         // wake word
         val phrases = prefs.phrases
-        calInfo.text = when {
-            calibrating -> MayaBus.calibration
-            MayaBus.calibration.isNotEmpty() && phrases.isEmpty() -> MayaBus.calibration
-            phrases.isEmpty() -> "Not calibrated yet. Recommended: say \u201CHey Maya\u201D three times so Maya learns how you pronounce it (about 15 seconds)."
-            else -> "Calibrated: " + phrases.joinToString("  \u00B7  ") { it.replace(" ", "").replace("\u2581", " ").trim() } +
-                (if (MayaBus.calibration.isNotEmpty()) "\n${MayaBus.calibration}" else "")
-        }
-        calBtn.isEnabled = !calibrating && !running && ModelManager.kwsReady(this)
+        calInfo.text = UiText.calibrationSummary(phrases, MayaBus.calibration, calibrating)
+        calBtn.isEnabled = !calibrating && ModelManager.kwsReady(this)  // a running Maya is paused and restarted automatically
         calBtn.alpha = if (calBtn.isEnabled) 1f else 0.45f
         calReset.visibility = if (phrases.isEmpty()) View.GONE else View.VISIBLE
-        sensLabel.text = "Sensitivity ${prefs.sensitivity}%%  (trigger threshold %.3f, applies next start)".format(java.util.Locale.US, prefs.wakeThreshold)
+        sensLabel.text = UiText.sensitivityLabel(prefs.sensitivity, prefs.wakeThreshold, running)
 
         // assistant
         startBtn.text = if (running) "Stop Maya" else "Start Maya"
@@ -457,6 +468,12 @@ class MainActivity : Activity() {
         silenceBtn.visibility = if (st == NativeBridge.STATE_THINKING || st == NativeBridge.STATE_SPEAKING) View.VISIBLE else View.GONE
 
         // settings
+        listOf("fast", "balanced", "smooth").forEachIndexed { i, key ->
+            val selected = prefs.voiceStyle == key
+            styleButtons[i].background = rounded(if (selected) cAccent else cButton, 12)
+            styleButtons[i].setTextColor(if (selected) Color.parseColor("#0B1020") else cText)
+        }
+        styleHint.text = UiText.voiceStyleHint(prefs.voiceStyle, running)
         gpuSwitch.text = if (prefs.gpuFailed) "GPU (Vulkan): turned off after a crash. Switch to retry" else "Use the GPU (Vulkan) for the language model"
         if (gpuSwitch.isChecked != (prefs.useGpu && !prefs.gpuFailed)) gpuSwitch.isChecked = prefs.useGpu && !prefs.gpuFailed
         logView.text = MayaBus.logText().ifEmpty { "Events appear here." }
@@ -521,38 +538,54 @@ class MainActivity : Activity() {
         MayaBus.changed()
     }
 
-    /** Records "Hey Maya" up to three times; the wake-word model's own decoder turns each into the tokens it hears. */
+    /**
+     * Records "Hey Maya" up to three accepted times. No beep (it bled into the clip): a short vibration and the
+     * on-screen prompt are the cue. Each clip is trimmed to the spoken part, decoded by the wake-word model's own
+     * recogniser, and checked by the native quality gate; only accepted samples become trigger phrases.
+     * A running Maya is paused for the duration and restarted afterwards, so the new phrases apply by themselves.
+     */
     private fun startCalibration() {
-        if (calibrating || MayaBus.running) return
+        if (calibrating) return
+        val wasRunning = MayaBus.running
         calibrating = true
-        say("Get ready\u2026")
+        say(if (wasRunning) "Pausing Maya for a moment\u2026" else "Get ready\u2026")
         render()
         worker.execute {
-            val cfg = ModelManager.buildConfig(this, prefs, false)
             val found = ArrayList<String>()
-            var good = 0
-            var attempts = 0
-            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 70)
             try {
-                while (good < 3 && attempts < 7) {
+                if (wasRunning) {
+                    MayaService.stop(this)
+                    val deadline = System.currentTimeMillis() + 20_000
+                    while (MayaBus.running && System.currentTimeMillis() < deadline) Thread.sleep(100)
+                    if (MayaBus.running) {
+                        say("Maya did not stop in time. Stop it first, then calibrate.")
+                        return@execute
+                    }
+                }
+                val cfg = ModelManager.buildConfig(this, prefs, false)
+                var good = 0
+                var attempts = 0
+                while (good < 3 && attempts < 8) {
                     attempts++
-                    say("Say \u201CHey Maya\u201D after the beep  (${good + 1} of 3)")
-                    Thread.sleep(800)
-                    tone.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
-                    Thread.sleep(280)
-                    val pcm = Calibration.record(2.6f)
-                    if (pcm == null) {
+                    say("Get ready\u2026  (${good + 1} of 3)")
+                    Thread.sleep(900)
+                    Haptics.tick(this)
+                    Thread.sleep(350)  // let the vibration motor settle before the microphone opens
+                    say(UiText.calibrationPrompt(good + 1, 3))
+                    val raw = Calibration.record(2.4f)
+                    if (raw == null) {
                         say("Could not open the microphone.")
                         break
                     }
-                    if (Calibration.peak(pcm) < 600) {
-                        say("That was too quiet. Speak up a little.")
-                        Thread.sleep(1500)
+                    val clip = SampleTrimmer.trim(raw)
+                    if (clip == null) {
+                        say("I did not hear you clearly. Speak up a little and say just \u201CHey Maya\u201D.")
+                        Thread.sleep(1600)
                         continue
                     }
                     say("Listening\u2026")
                     val res = try {
-                        NativeBridge.nativeCalibrateDecode(cfg, pcm)
+                        NativeBridge.nativeCalibrateDecode(cfg, clip.pcm)
                     } catch (t: Throwable) {
                         "ERR\t${t.message}"
                     }
@@ -560,21 +593,34 @@ class MainActivity : Activity() {
                     if (parts[0] == "OK" && parts.size >= 3) {
                         good++
                         if (parts[2] !in found) found.add(parts[2])
-                        say("Heard \u201C${parts[1].lowercase().replaceFirstChar { it.uppercase() }}\u201D \u2713")
+                        say(UiText.calibrationHeard(PhraseBook.display(parts[2]), good, 3))
                     } else {
                         say(parts.getOrElse(1) { "Try again" })
                     }
-                    Thread.sleep(1300)
+                    Thread.sleep(1500)
                 }
+                if (found.isNotEmpty()) prefs.phrases = PhraseBook.merge(prefs.phrases, found)
+                say(
+                    when {
+                        found.isEmpty() -> "No usable samples. Try again in a quieter spot, saying just \u201CHey Maya\u201D."
+                        wasRunning -> "Saved. Restarting Maya with your pronunciation\u2026"
+                        else -> "Saved. Tap Start Maya to use your pronunciation."
+                    }
+                )
             } finally {
-                tone.release()
+                calibrating = false
+                MayaBus.changed()
+                runOnUiThread {
+                    // the outcome line is only a status message: let it disappear after a while
+                    window.decorView.postDelayed({
+                        if (!calibrating) {
+                            MayaBus.calibration = ""
+                            MayaBus.changed()
+                        }
+                    }, 9000)
+                    if (wasRunning) MayaService.start(this)  // visible activity: allowed to start the microphone service
+                }
             }
-            if (found.isNotEmpty()) prefs.phrases = (prefs.phrases + found).distinct().take(4)
-            calibrating = false
-            say(
-                if (found.isEmpty()) "No usable samples. Try again in a quieter spot, saying just \u201CHey Maya\u201D."
-                else "Done. Start Maya to use your pronunciation."
-            )
         }
     }
 

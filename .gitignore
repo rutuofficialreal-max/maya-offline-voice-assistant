@@ -9,3 +9,5 @@ local.properties
 .idea/
 *.apk
 dist/
+__pycache__/
+*.pyc

@@ -35,6 +35,11 @@ class Prefs(context: Context) {
         get() = (sp.getString("phrases", "") ?: "").split('\n').filter { it.isNotBlank() }
         set(v) { sp.edit().putString("phrases", v.joinToString("\n")).apply() }
 
+    /** "fast" | "balanced" | "smooth": how answers are cut up and joined for the voice (see tts_style.h). */
+    var voiceStyle: String
+        get() = sp.getString("voice_style", "balanced") ?: "balanced"
+        set(v) { sp.edit().putString("voice_style", v).apply() }
+
     /** Log-scale map 0..100 -> trigger threshold 0.30 .. 0.02 (host tests: ~0.06-0.10 was the sweet spot). */
     val wakeThreshold: Float
         get() = (0.30 * (0.02 / 0.30).pow(sensitivity / 100.0)).toFloat()

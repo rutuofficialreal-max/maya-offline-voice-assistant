@@ -38,6 +38,9 @@ object NativeBridge {
     external fun nativeInterrupt(handle: Long)
     external fun nativeDestroy(handle: Long)
 
+    /** Live wake-word update (no model reload): trigger threshold + calibrated phrases separated by newlines. */
+    external fun nativeSetWake(handle: Long, threshold: Float, phrases: String)
+
     /** Wake-word calibration: "OK\t<heard text>\t<tokens>" or "ERR\t<message>". */
     external fun nativeCalibrateDecode(config: String, pcm: ShortArray): String
 }

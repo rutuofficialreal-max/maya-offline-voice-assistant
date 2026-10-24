@@ -246,7 +246,7 @@ bool SentenceChunker::extract(bool final, std::string& chunk) {
   const bool first = emitted_ == 0;
   const int minW = first ? opt_.firstMinWords : opt_.laterMinWords;
   const int maxW = first ? opt_.firstMaxWords : opt_.laterMaxWords;
-  const int minStrong = first ? 1 : 3;  // avoid choppy one-word sentences after the first
+  const int minStrong = first ? opt_.firstSentenceMinWords : opt_.laterSentenceMinWords;  // merge tiny sentences
   const size_t n = buf_.size();
   int words = 0;
   bool inWord = false;
@@ -314,6 +314,7 @@ bool SentenceChunker::extract(bool final, std::string& chunk) {
 
 void SentenceChunker::push(const std::string& text, std::vector<std::string>& out) {
   buf_ += text;
+  if (opt_.holdAll) return;  // "smooth" style: wait for the complete reply
   std::string chunk;
   while (extract(false, chunk)) {
     chunk = trim(chunk);
@@ -322,6 +323,16 @@ void SentenceChunker::push(const std::string& text, std::vector<std::string>& ou
 }
 
 void SentenceChunker::flush(std::vector<std::string>& out) {
+  if (opt_.holdAll) {
+    std::string all = trim(buf_);
+    buf_.clear();
+    if (countWords(all) >= 1) {
+      if (std::isalnum(static_cast<unsigned char>(all.back()))) all += '.';
+      out.push_back(all);
+      ++emitted_;
+    }
+    return;
+  }
   std::string chunk;
   bool any = false;
   while (extract(true, chunk)) {
