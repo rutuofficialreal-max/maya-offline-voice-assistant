@@ -59,7 +59,10 @@ android {
         release {
             isMinifyEnabled = false
             val release = signingConfigs.getByName("mayaRelease")
-            val haveKey = System.getenv("MAYA_KEYSTORE")?.let { file(it).exists() } == true
+            // Only use it when the key *and* its password are actually present, otherwise Gradle fails
+            // with "missing required property storePassword" instead of falling back.
+            val haveKey = System.getenv("MAYA_KEYSTORE")?.let { file(it).exists() } == true &&
+                !System.getenv("MAYA_KEYSTORE_PASSWORD").isNullOrEmpty()
             // Signed with the stable key when CI provides it, otherwise the debug key so local builds still install.
             signingConfig = if (haveKey) release else signingConfigs.getByName("debug")
         }

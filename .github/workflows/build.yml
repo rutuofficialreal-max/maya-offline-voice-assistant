@@ -78,6 +78,9 @@ jobs:
             echo "$MAYA_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/maya-release.jks"
             echo "MAYA_KEYSTORE=$RUNNER_TEMP/maya-release.jks" >> "$GITHUB_ENV"
             echo "MAYA_KEY_ALIAS=maya" >> "$GITHUB_ENV"
+            # Gradle runs in a later step, so the passwords have to travel through GITHUB_ENV too.
+            echo "MAYA_KEYSTORE_PASSWORD=$MAYA_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "MAYA_KEY_PASSWORD=${MAYA_KEY_PASSWORD:-$MAYA_KEYSTORE_PASSWORD}" >> "$GITHUB_ENV"
             echo "signed with the release key"
           else
             echo "::warning::MAYA_KEYSTORE_B64 is not set - this APK is debug-signed and cannot update in place"
