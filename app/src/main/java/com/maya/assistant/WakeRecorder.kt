@@ -104,7 +104,7 @@ object WakeRecorder {
             while (true) {
                 val elapsed = ((System.currentTimeMillis() - started) / 1000).toInt()
                 if (elapsed >= seconds) break
-                if (elapsed != lastTick) {
+                if (elapsed.toLong() != lastTick) {
                     lastTick = elapsed.toLong()
                     onTick(elapsed)
                 }
