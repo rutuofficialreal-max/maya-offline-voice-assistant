@@ -30,6 +30,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("gpu_failed", false)
         set(v) { sp.edit().putBoolean("gpu_failed", v).commit() }
 
+    /** How many voice-dataset sessions have been recorded (used only to show progress). */
+    var datasetSessions: Int
+        get() = sp.getInt("dataset_sessions", 0)
+        set(v) { sp.edit().putInt("dataset_sessions", v).apply() }
+
     /** Calibrated "Hey Maya" pronunciations (BPE token strings produced by the wake-word model). */
     var phrases: List<String>
         get() = (sp.getString("phrases", "") ?: "").split('\n').filter { it.isNotBlank() }

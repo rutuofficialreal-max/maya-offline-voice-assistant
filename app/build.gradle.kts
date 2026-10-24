@@ -15,8 +15,8 @@ android {
         applicationId = "com.maya.assistant"
         minSdk = 30
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.0.3"
+        versionCode = 5
+        versionName = "1.0.4"
 
         ndk { abiFilters += "arm64-v8a" }  // Redmi 17 5G is arm64 only: halves build time and APK size
 

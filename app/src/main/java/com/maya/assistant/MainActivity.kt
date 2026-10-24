@@ -65,6 +65,9 @@ class MainActivity : Activity() {
     private lateinit var silenceBtn: Button
     private lateinit var gpuSwitch: Switch
     private lateinit var sensLabel: TextView
+    private lateinit var datasetInfo: TextView
+    private lateinit var datasetBtn: Button
+    private lateinit var datasetExport: Button
     private lateinit var styleButtons: List<Button>
     private lateinit var styleHint: TextView
     private lateinit var logView: TextView
@@ -319,6 +322,20 @@ class MainActivity : Activity() {
             }
         )
 
+        datasetInfo = text("", 13f, cMuted)
+        datasetBtn = button("Record a 75 s session", true) { onRecordSession() }
+        datasetExport = button("Export ZIP", false) { onExportDataset() }
+        val dataset = card(
+            "Voice dataset (your own wake word)",
+            datasetInfo.apply { layoutParams = lp(match, wrap, 8) },
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(datasetBtn, LinearLayout.LayoutParams(0, wrap, 2f))
+                addView(datasetExport, LinearLayout.LayoutParams(0, wrap, 1f).apply { leftMargin = dp(8) })
+                layoutParams = lp(match, wrap, 12)
+            }
+        )
+
         startBtn = button("Start Maya", true) { onStartStop() }
         silenceBtn = button("Silence", false) { MayaService.interrupt(this) }
         val assistant = card(
@@ -383,6 +400,7 @@ class MainActivity : Activity() {
             addView(convo)
             addView(models)
             addView(wake)
+            addView(dataset)
             addView(assistant)
             addView(settings)
             addView(log)
@@ -466,6 +484,22 @@ class MainActivity : Activity() {
         startBtn.isEnabled = (running || allReady) && !calibrating
         startBtn.alpha = if (startBtn.isEnabled) 1f else 0.45f
         silenceBtn.visibility = if (st == NativeBridge.STATE_THINKING || st == NativeBridge.STATE_SPEAKING) View.VISIBLE else View.GONE
+
+        // voice dataset
+        val sessions = WakeRecorder.sessions(this)
+        val clips = WakeRecorder.clipCount(this)
+        datasetInfo.text = when {
+            recordingDataset -> MayaBus.dataset
+            clips == 0 -> "For a wake word of your own: record 3 sessions (about 4 minutes in total) and export the ZIP. " +
+                "Each session just asks you to repeat \u201CHey Maya\u201D with a short pause between repeats."
+            sessions.size >= 3 -> "$clips clips in ${sessions.size} sessions. Tap Export ZIP and send the file on."
+            else -> "$clips clips in ${sessions.size} session(s) \u00B7 ${3 - sessions.size} more recommended. " +
+                MayaBus.dataset
+        }
+        datasetBtn.isEnabled = !recordingDataset && !calibrating
+        datasetBtn.alpha = if (datasetBtn.isEnabled) 1f else 0.45f
+        datasetBtn.text = if (recordingDataset) "Recording\u2026" else "Record a ${WakeRecorder.SECONDS} s session"
+        datasetExport.visibility = if (clips > 0) View.VISIBLE else View.GONE
 
         // settings
         listOf("fast", "balanced", "smooth").forEachIndexed { i, key ->
@@ -620,6 +654,68 @@ class MainActivity : Activity() {
                     }, 9000)
                     if (wasRunning) MayaService.start(this)  // visible activity: allowed to start the microphone service
                 }
+            }
+        }
+    }
+
+    @Volatile private var recordingDataset = false
+
+    /** One guided session: the user repeats "Hey Maya" for ~75 s; every utterance becomes a WAV clip. */
+    private fun onRecordSession() {
+        if (recordingDataset) return
+        withPermissions {
+            if (!hasMic()) {
+                toast("The microphone permission is needed to record")
+                return@withPermissions
+            }
+            if (MayaBus.running) {
+                toast("Stop Maya first (the recorder needs the microphone)")
+                return@withPermissions
+            }
+            recordingDataset = true
+            MayaBus.dataset = "Get ready\u2026"
+            render()
+            worker.execute {
+                var last = 0
+                val session = WakeRecorder.recordSession(
+                    this,
+                    onClip = { index, _ ->
+                        last = index
+                        runOnUiThread {
+                            Haptics.tick(this)
+                            MayaBus.dataset = "Recording\u2026 $index clip(s). Keep saying \u201CHey Maya\u201D."
+                            render()
+                        }
+                    },
+                    onTick = { sec ->
+                        if (sec % 15 == 0) runOnUiThread {
+                            MayaBus.dataset = "Recording\u2026 ${WakeRecorder.SECONDS - sec} s left, $last clip(s)."
+                            render()
+                        }
+                    },
+                )
+                recordingDataset = false
+                val total = WakeRecorder.clipCount(this)
+                MayaBus.dataset = when {
+                    session == null -> "Could not open the microphone."
+                    session.clips == 0 -> "No utterances found. Say \u201CHey Maya\u201D a bit louder, with a pause after each."
+                    session.peak < 1500 -> "Saved ${session.clips} clips, but the level was low. Move closer to the phone next time."
+                    else -> "Saved ${session.clips} clips. Total: $total."
+                }
+                if (session != null && session.clips > 0) prefs.datasetSessions = prefs.datasetSessions + 1
+                runOnUiThread { render() }
+            }
+        }
+    }
+
+    private fun onExportDataset() {
+        worker.execute {
+            val path = WakeRecorder.exportZip(this)
+            runOnUiThread {
+                toast(
+                    if (path == null) "Nothing to export yet"
+                    else "Saved to $path \u2014 upload it to Kaggle or send it on."
+                )
             }
         }
     }

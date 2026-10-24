@@ -28,6 +28,8 @@ object MayaBus {
     @Volatile var lastReply = ""
     @Volatile var download = DownloadStatus()
     @Volatile var calibration = ""
+    /** Status line for the "voice dataset" card (wake-word training recordings). */
+    @Volatile var dataset = ""
 
     private val lines = ArrayDeque<String>()
 
