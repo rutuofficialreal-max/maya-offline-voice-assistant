@@ -70,6 +70,23 @@ jobs:
           gradle-version: "8.10.2"
 
       # First choice: llama.cpp with the Vulkan GPU backend.
+      - name: Prepare the release signing key
+        # Repository secrets: MAYA_KEYSTORE_B64 (base64 of maya-release.jks) + MAYA_KEYSTORE_PASSWORD.
+        # Missing secrets => debug signing => the build still succeeds, it just cannot update in place.
+        run: |
+          if [ -n "${MAYA_KEYSTORE_B64:-}" ]; then
+            echo "$MAYA_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/maya-release.jks"
+            echo "MAYA_KEYSTORE=$RUNNER_TEMP/maya-release.jks" >> "$GITHUB_ENV"
+            echo "MAYA_KEY_ALIAS=maya" >> "$GITHUB_ENV"
+            echo "signed with the release key"
+          else
+            echo "::warning::MAYA_KEYSTORE_B64 is not set - this APK is debug-signed and cannot update in place"
+          fi
+        env:
+          MAYA_KEYSTORE_B64: ${{ secrets.MAYA_KEYSTORE_B64 }}
+          MAYA_KEYSTORE_PASSWORD: ${{ secrets.MAYA_KEYSTORE_PASSWORD }}
+          MAYA_KEY_PASSWORD: ${{ secrets.MAYA_KEY_PASSWORD }}
+
       - name: Build APK (Vulkan)
         id: vulkan
         continue-on-error: true

@@ -15,8 +15,8 @@ android {
         applicationId = "com.maya.assistant"
         minSdk = 30
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.0.4"
+        versionCode = 6
+        versionName = "1.1.0"
 
         ndk { abiFilters += "arm64-v8a" }  // Redmi 17 5G is arm64 only: halves build time and APK size
 
@@ -40,11 +40,28 @@ android {
 
     sourceSets["main"].jniLibs.srcDir("src/main/cpp/third_party/sherpa-onnx/jniLibs")
 
+    // A stable release key, so v1.1.1 installs *over* v1.1.0 instead of forcing an uninstall.
+    // The keystore is never in the repo: CI decodes it from repository secrets into a temp file and
+    // points MAYA_KEYSTORE at it. Without those secrets (local builds, forks) the debug key is used.
+    signingConfigs {
+        create("mayaRelease") {
+            val ks = System.getenv("MAYA_KEYSTORE") ?: (findProperty("mayaKeystore") as String?)
+            if (ks != null && file(ks).exists()) {
+                storeFile = file(ks)
+                storePassword = System.getenv("MAYA_KEYSTORE_PASSWORD") ?: (findProperty("mayaKeystorePassword") as String?)
+                keyAlias = System.getenv("MAYA_KEY_ALIAS") ?: (findProperty("mayaKeyAlias") as String?) ?: "maya"
+                keyPassword = System.getenv("MAYA_KEY_PASSWORD") ?: (findProperty("mayaKeyPassword") as String?) ?: storePassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Personal build: signed with the auto-generated debug key so the APK installs directly.
-            signingConfig = signingConfigs.getByName("debug")
+            val release = signingConfigs.getByName("mayaRelease")
+            val haveKey = System.getenv("MAYA_KEYSTORE")?.let { file(it).exists() } == true
+            // Signed with the stable key when CI provides it, otherwise the debug key so local builds still install.
+            signingConfig = if (haveKey) release else signingConfigs.getByName("debug")
         }
     }
 

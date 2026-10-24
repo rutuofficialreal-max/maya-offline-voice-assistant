@@ -21,6 +21,7 @@
 #include "tts_style.h"
 #include "vad.h"
 #include "wake_word.h"
+#include "wake_net.h"
 
 namespace maya {
 
@@ -35,6 +36,10 @@ struct EngineConfig {
 
   // wake word
   float kwsThreshold = 0.07f;
+  // Trained "Hey Maya" model (v1.1.0). Empty path or engine 0 => the sherpa spotter is used.
+  std::string wakeNetWeights;
+  int wakeEngine = 0;              // 0 = sherpa keyword spotter, 1 = trained Maya-Wake model
+  float wakeNetThreshold = 0.9976f;
   float kwsBoost = 1.5f;
   std::vector<std::string> kwsPhrases;  // calibrated pronunciations (token strings)
   // capture / VAD
@@ -74,6 +79,10 @@ class MayaEngine {
   void interrupt();                                      // cut the current answer short
   // Applies a new wake threshold / calibrated phrases without reloading any model. Thread-safe;
   // the pipeline thread picks it up the next time it waits for the wake word.
+  // Switch the wake engine while running (0 = sherpa spotter, 1 = trained model). Takes effect on
+  // the next wake loop; both engines stay loaded, so no model reload is needed.
+  void setWakeEngine(int engine);
+
   void setWakeOptions(float threshold, std::vector<std::string> phrases);
 
  private:
@@ -106,12 +115,14 @@ class MayaEngine {
   AudioCapture capture_;
   AudioPlayer player_;
   WakeWord kws_;
+  WakeNet wakeNet_;
   Vad vad_;
   WhisperStt stt_;
   Llm llm_;
   Tts tts_;
 
   std::atomic<bool> running_{false};
+  std::atomic<int> wakeEngine_{0};   // 0 = sherpa spotter, 1 = trained Maya-Wake model
   std::atomic<bool> interrupt_{false};
   std::atomic<State> state_{State::Stopped};
   std::string backendInfo_;

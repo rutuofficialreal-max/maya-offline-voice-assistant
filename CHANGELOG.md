@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.1.0
+Own wake word (trained on your voice)
+- New waking engine: a 170k-parameter CNN trained on 180 recordings of *your* "Hey Maya"
+  (`hey_maya.onnx` -> `assets/wake_weights.bin`, 708 KiB, shipped in the APK). Held-out result:
+  28/28 recall, 0 false wakes/hour on 24 min of held-out noise/music/speech.
+- The model runs as a **hand-written C++ forward pass** (`wake_net.cpp`): own Hann window, 512-point
+  FFT, 40-band mel, 8 conv layers, 3-of-5 window patience. No ONNX Runtime in the wake path, no
+  openWakeWord feature models, nothing to download.
+- Settings -> **Wake engine**: `Maya-Wake (trained)` / `sherpa (default)`. Both engines stay loaded
+  and the switch is live (`nativeSetWakeEngine`), so trying it costs nothing. sherpa remains the
+  default until the new engine has been tested on the phone.
+- The sensitivity slider drives whichever engine is active: for Maya-Wake it maps to the trained
+  threshold curve (default 55 -> 0.9976, the value picked in validation).
+- `tools/export_wake_net.py` folds BatchNorm and proves numerically that the C++ maths equals the
+  ONNX model (<=1e-8 on the numpy path, <=3e-5 through the float32 C++ path);
+  `cpp/tests/test_wake_net.cpp` re-checks it in CI on every push.
+
+Builds
+- **Stable release signing key.** From this version the APK is signed with a real release key kept in
+  the repository secrets, so updates install over the previous version instead of needing an uninstall.
+  CI falls back to the debug key when the secrets are absent (forks, local builds).
+
+## 1.0.4
+Voice recorder for the training data
+- New card **Voice dataset (your own wake word)**: `Record a 75 s session` captures "Hey Maya" over and
+  over, cuts each utterance with a 20 ms energy detector (150 ms of silence kept on each side) and
+  writes one 16 kHz / 16-bit / mono WAV per clip into the app's private folder.
+- `Export ZIP` writes `Maya-wake-voice-<date>.zip` (Download/Maya, plus the app's external folder) —
+  one session per folder, README with counts. Nothing is uploaded by the app.
+- A vibration confirms every captured clip, and the card shows the running total across sessions.
+
 ## 1.0.3
 Calibration
 - Gate rewritten (`wake_gate.cpp`): accepts "<greeting> <name starting with M>" in 2-3 words, refuses names that are

@@ -46,6 +46,32 @@ class Prefs(context: Context) {
         set(v) { sp.edit().putString("voice_style", v).apply() }
 
     /** Log-scale map 0..100 -> trigger threshold 0.30 .. 0.02 (host tests: ~0.06-0.10 was the sweet spot). */
+    /** 0 = sherpa keyword spotter (default), 1 = trained "Hey Maya" model (Maya-Wake). */
+    var wakeEngine: Int
+        get() = sp.getInt("wake_engine", 0)
+        set(v) { sp.edit().putInt("wake_engine", if (v == 1) 1 else 0).apply() }
+
+    /**
+     * Threshold for the trained model, derived from the same slider. The model's own scores are
+     * extremely bimodal (clean "Hey Maya" ~0.9999, everything else < 0.01), so this curve is anchored
+     * on the value picked during training validation: 55 (the default) = 0.9976, which measured
+     * 28/28 recall and 0 false wakes per hour on the held-out data. Sliding right trades margin for
+     * sensitivity: 100 = 0.84 (the point where false wakes appeared in validation).
+     */
+    val wakeNetThreshold: Float
+        get() {
+            val s = sensitivity / 100.0
+            return if (s >= 0.55) {
+                (0.9976 - (s - 0.55) / 0.45 * (0.9976 - 0.84)).toFloat()
+            } else {
+                (0.9976 + (0.55 - s) / 0.55 * (0.9999 - 0.9976)).toFloat()
+            }
+        }
+
+    /** The threshold the active engine will actually use. */
+    val activeThreshold: Float
+        get() = if (wakeEngine == 1) wakeNetThreshold else wakeThreshold
+
     val wakeThreshold: Float
         get() = (0.30 * (0.02 / 0.30).pow(sensitivity / 100.0)).toFloat()
 }

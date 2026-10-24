@@ -126,6 +126,13 @@ void nativeSetWake(JNIEnv* env, jobject, jlong handle, jfloat threshold, jstring
   b->engine->setWakeOptions(threshold, std::move(phrases));
 }
 
+// Switch the wake engine at runtime: 0 = sherpa keyword spotter, 1 = trained "Hey Maya" model.
+void nativeSetWakeEngine(JNIEnv*, jobject, jlong handle, jint engine) {
+  auto* b = reinterpret_cast<Bridge*>(handle);
+  if (!b || !b->engine) return;
+  b->engine->setWakeEngine(static_cast<int>(engine));
+}
+
 void nativeDestroy(JNIEnv* env, jobject, jlong handle) {
   auto* b = reinterpret_cast<Bridge*>(handle);
   if (!b) return;
@@ -165,6 +172,7 @@ const JNINativeMethod kMethods[] = {
     {"nativeInterrupt", "(J)V", reinterpret_cast<void*>(nativeInterrupt)},
     {"nativeDestroy", "(J)V", reinterpret_cast<void*>(nativeDestroy)},
     {"nativeSetWake", "(JFLjava/lang/String;)V", reinterpret_cast<void*>(nativeSetWake)},
+    {"nativeSetWakeEngine", "(JI)V", reinterpret_cast<void*>(nativeSetWakeEngine)},
     {"nativeCalibrateDecode", "(Ljava/lang/String;[S)Ljava/lang/String;", reinterpret_cast<void*>(nativeCalibrateDecode)},
 };
 

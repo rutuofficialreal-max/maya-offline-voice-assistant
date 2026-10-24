@@ -44,6 +44,8 @@ EngineConfig EngineConfig::parse(const std::string& text) {
     str("tts.data_dir", c.ttsDataDir); str("system_prompt", c.systemPrompt);
     if (k == "kws.phrase" && !v.empty()) c.kwsPhrases.push_back(v);
     f32("kws.threshold", c.kwsThreshold); f32("kws.boost", c.kwsBoost);
+    str("wake.net", c.wakeNetWeights); i32("wake.engine", c.wakeEngine);
+    f32("wake.net.threshold", c.wakeNetThreshold);
     i32("vad.end_silence_ms", c.endSilenceMs); f32("vad.threshold", c.vadThreshold);
     i32("no_speech_timeout_ms", c.noSpeechTimeoutMs); i32("max_command_ms", c.maxCommandMs);
     i32("preroll_ms", c.prerollMs);
@@ -91,6 +93,21 @@ bool MayaEngine::init(const EngineConfig& cfg, std::string* err) {
   wo.threshold = cfg.kwsThreshold; wo.boost = cfg.kwsBoost; wo.threads = 1; wo.phrases = cfg.kwsPhrases;
   wakeBase_ = wo;
   if (!kws_.init(wo, err)) return false;
+
+  // Trained Maya-Wake model. Optional: if the blob is missing or malformed we simply keep the
+  // sherpa spotter, so this can never make the app worse than it was.
+  if (!cfg.wakeNetWeights.empty()) {
+    WakeNetOptions wn;
+    wn.weightsPath = cfg.wakeNetWeights;
+    wn.threshold = cfg.wakeNetThreshold;
+    std::string wnErr;
+    if (wakeNet_.init(wn, &wnErr)) {
+      emit(EVT_INFO, "Wake word: trained Maya-Wake model ready");
+    } else {
+      emit(EVT_INFO, "Wake word: trained model unavailable, using the sherpa spotter (" + wnErr + ")");
+    }
+  }
+  wakeEngine_.store(wakeNet_.ok() ? (cfg.wakeEngine == 1 ? 1 : 0) : 0);
 
   emit(EVT_INFO, "Loading voice detector…");
   VadOptions vo;
@@ -156,6 +173,17 @@ void MayaEngine::setWakeOptions(float threshold, std::vector<std::string> phrase
   wakeDirty_.store(true);
 }
 
+void MayaEngine::setWakeEngine(int engine) {
+  const int want = engine == 1 ? 1 : 0;
+  if (want == 1 && !wakeNet_.ok()) {
+    emit(EVT_INFO, "Wake word: trained model is not loaded; staying on the sherpa spotter");
+    wakeEngine_.store(0);
+    return;
+  }
+  wakeEngine_.store(want);
+  emit(EVT_INFO, want == 1 ? "Wake word: trained Maya-Wake model" : "Wake word: sherpa spotter");
+}
+
 // Pipeline thread only (kws_ is not thread-safe).
 void MayaEngine::applyPendingWake() {
   WakeWordOptions opts;
@@ -163,6 +191,7 @@ void MayaEngine::applyPendingWake() {
     std::lock_guard<std::mutex> lk(wakeMu_);
     opts = pendingWake_;
   }
+  wakeNet_.setThreshold(opts.threshold);   // slider reaches the trained model too
   std::string err;
   if (kws_.reconfigure(opts, &err)) {
     char m[96];
@@ -218,6 +247,7 @@ bool MayaEngine::waitForWake(std::vector<int16_t>& preroll) {
   capture_.discard();
   capture_.setActive(true);
   kws_.reset();
+  wakeNet_.reset();
 
   const size_t prSamples = std::max<size_t>(1, static_cast<size_t>(cfg_.prerollMs) * kMicRate / 1000);
   std::vector<int16_t> ring(prSamples, 0);
@@ -240,7 +270,8 @@ bool MayaEngine::waitForWake(std::vector<int16_t>& preroll) {
       f[i] = static_cast<float>(buf[i]) * (1.0f / 32768.0f);
     }
     filled = std::min(ring.size(), filled + n);
-    if (kws_.accept(f.data(), n)) {
+    const bool useNet = wakeEngine_.load() == 1 && wakeNet_.ok();
+    if (useNet ? wakeNet_.accept(f.data(), n) : kws_.accept(f.data(), n)) {
       preroll.resize(filled);
       const size_t start = (wpos + ring.size() - filled) % ring.size();
       for (size_t i = 0; i < filled; ++i) preroll[i] = ring[(start + i) % ring.size()];

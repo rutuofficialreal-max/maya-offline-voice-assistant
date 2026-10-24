@@ -20,5 +20,9 @@ run() {  # run <test name> <sanitizers> <extra sources...>
 run text_utils   address,undefined "$SRC/text_utils.cpp"
 run ring_buffer  thread
 run wake_gate    address,undefined "$SRC/wake_gate.cpp"
+# needs the exported weights blob; the test also proves the C++ maths equals the ONNX model
+"$CXX" -std=c++17 -O2 -Wall -Wextra -I "$SRC" "$TESTS/test_wake_net.cpp" "$SRC/wake_net.cpp" \
+       -o "$OUT/wake_net"
+(cd "$ROOT" && "$OUT/wake_net" app/src/main/assets/wake_weights.bin)
 run tts_styles   address,undefined "$SRC/speech_utils.cpp" "$SRC/text_utils.cpp"
 echo "all host tests passed"

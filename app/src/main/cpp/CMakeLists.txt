@@ -106,6 +106,7 @@ add_library(maya SHARED
   src/audio_capture.cpp
   src/audio_player.cpp
   src/wake_word.cpp
+  src/wake_net.cpp
   src/vad.cpp
   src/stt_whisper.cpp
   src/llm.cpp

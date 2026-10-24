@@ -41,6 +41,9 @@ object NativeBridge {
     /** Live wake-word update (no model reload): trigger threshold + calibrated phrases separated by newlines. */
     external fun nativeSetWake(handle: Long, threshold: Float, phrases: String)
 
+    /** 0 = sherpa keyword spotter, 1 = trained "Hey Maya" model. Takes effect on the next wake loop. */
+    external fun nativeSetWakeEngine(handle: Long, engine: Int)
+
     /** Wake-word calibration: "OK\t<heard text>\t<tokens>" or "ERR\t<message>". */
     external fun nativeCalibrateDecode(config: String, pcm: ShortArray): String
 }

@@ -96,7 +96,8 @@ class MayaService : Service(), MayaListener {
         val prefs = Prefs(this)
         exec.execute {
             try {
-                NativeBridge.nativeSetWake(h, prefs.wakeThreshold, prefs.phrases.joinToString("\n"))
+                NativeBridge.nativeSetWake(h, prefs.activeThreshold, prefs.phrases.joinToString("\n"))
+                NativeBridge.nativeSetWakeEngine(h, prefs.wakeEngine)
             } catch (t: Throwable) {
                 Log.e(TAG, "nativeSetWake failed", t)
             }

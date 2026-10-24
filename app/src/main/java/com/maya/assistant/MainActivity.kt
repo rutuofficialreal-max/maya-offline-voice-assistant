@@ -64,6 +64,8 @@ class MainActivity : Activity() {
     private lateinit var startBtn: Button
     private lateinit var silenceBtn: Button
     private lateinit var gpuSwitch: Switch
+    private lateinit var engineButtons: List<Button>
+    private lateinit var engineHint: TextView
     private lateinit var sensLabel: TextView
     private lateinit var datasetInfo: TextView
     private lateinit var datasetBtn: Button
@@ -369,6 +371,23 @@ class MainActivity : Activity() {
             }
             layoutParams = lp(match, wrap, 6)
         }
+        // Wake engine: the trained "Hey Maya" model, or the sherpa keyword spotter that came before it.
+        engineButtons = listOf("Maya-Wake (trained)", "sherpa (default)").mapIndexed { i, label ->
+            button(label, false) {
+                if (prefs.wakeEngine == i) return@button
+                prefs.wakeEngine = i
+                if (MayaBus.running) MayaService.reloadWake(this)
+                toast(if (i == 1) "Using the model trained on your voice" else "Using the sherpa spotter")
+                render()
+            }
+        }
+        engineHint = text("", 12f, cMuted)
+        val engineRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            engineButtons.forEachIndexed { i, b -> addView(b, LinearLayout.LayoutParams(0, wrap, 1f).apply { if (i > 0) leftMargin = dp(8) }) }
+            layoutParams = lp(match, wrap, 8)
+        }
+
         val settings = card(
             "Settings",
             Switch(this).apply {
@@ -379,6 +398,9 @@ class MainActivity : Activity() {
                 layoutParams = lp(match, wrap, 8)
             },
             gpuSwitch.apply { layoutParams = lp(match, wrap, 10) },
+            text("Wake engine", 13f, cText, true).apply { layoutParams = lp(match, wrap, 16) },
+            engineRow,
+            engineHint.apply { layoutParams = lp(match, wrap, 6) },
             text("Voice style", 13f, cText, true).apply { layoutParams = lp(match, wrap, 16) },
             styleRow,
             styleHint.apply { layoutParams = lp(match, wrap, 6) },
@@ -506,6 +528,17 @@ class MainActivity : Activity() {
             val selected = prefs.voiceStyle == key
             styleButtons[i].background = rounded(if (selected) cAccent else cButton, 12)
             styleButtons[i].setTextColor(if (selected) Color.parseColor("#0B1020") else cText)
+        }
+        engineButtons.forEachIndexed { i, b ->
+            val selected = prefs.wakeEngine == i
+            b.background = rounded(if (selected) cAccent else cButton, 12)
+            b.setTextColor(if (selected) Color.parseColor("#0B1020") else cText)
+        }
+        engineHint.text = if (prefs.wakeEngine == 1) {
+            "Trained on 180 of your recordings. Sensitive to your voice, quieter on other speech. " +
+                "Switch back if it wakes on the TV."
+        } else {
+            "The open-vocabulary spotter used since v1.0.0. Tap \u201CMaya-Wake\u201D to try the model trained on your voice."
         }
         styleHint.text = UiText.voiceStyleHint(prefs.voiceStyle, running)
         gpuSwitch.text = if (prefs.gpuFailed) "GPU (Vulkan): turned off after a crash. Switch to retry" else "Use the GPU (Vulkan) for the language model"

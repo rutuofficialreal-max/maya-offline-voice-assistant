@@ -64,6 +64,22 @@ object ModelManager {
     private fun path(ctx: Context, vararg parts: String): String = File(rootDir(ctx), parts.joinToString("/")).absolutePath
 
     /** Newline separated key=value pairs, parsed by EngineConfig::parse in the native core. */
+    /** The trained wake model rides along in the APK (708 KB) - copy it out once so native code can read it. */
+    fun wakeNetWeights(ctx: Context): File {
+        val f = File(ctx.filesDir, "models/wake/wake_weights.bin")
+        val stamp = File(ctx.filesDir, "models/wake/.version")
+        val version = runCatching {
+            val pi = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+            "${pi.versionCode}:${pi.lastUpdateTime}"
+        }.getOrDefault("0")
+        val upToDate = f.length() > 100_000L && stamp.takeIf { it.exists() }?.readText() == version
+        if (upToDate) return f
+        f.parentFile?.mkdirs()
+        ctx.assets.open("wake_weights.bin").use { input -> f.outputStream().use { input.copyTo(it) } }
+        stamp.writeText(version)
+        return f
+    }
+
     fun buildConfig(ctx: Context, prefs: Prefs, useGpu: Boolean): String = buildString {
         fun kv(k: String, v: Any) { append(k).append('=').append(v).append('\n') }
         kv("kws.encoder", path(ctx, "kws", KWS_ENCODER))
@@ -71,6 +87,10 @@ object ModelManager {
         kv("kws.joiner", path(ctx, "kws", KWS_JOINER))
         kv("kws.tokens", path(ctx, "kws", "tokens.txt"))
         kv("kws.threshold", "%.4f".format(java.util.Locale.US, prefs.wakeThreshold))
+        // Trained "Hey Maya" model (Maya-Wake). Both engines stay loaded; this only picks one.
+        kv("wake.net", runCatching { wakeNetWeights(ctx).absolutePath }.getOrDefault(""))
+        kv("wake.engine", prefs.wakeEngine)
+        kv("wake.net.threshold", "%.4f".format(java.util.Locale.US, prefs.wakeNetThreshold))
         kv("kws.boost", "1.5")
         for (p in prefs.phrases) kv("kws.phrase", p)
         kv("vad.model", path(ctx, "vad", "silero_vad.onnx"))
